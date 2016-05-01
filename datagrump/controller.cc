@@ -5,18 +5,21 @@
 
 using namespace std;
 
-#define T_LOW 80
-#define T_HIGH 200
-#define DELTA 1
+#define T_LOW 60
+#define T_HIGH 150
+#define DELTA 2
 #define ALPHA 0.05
+#define BETA 0.2
 
 /* Default constructor */
 Controller::Controller( const bool debug )
   : debug_( debug ),
   running_rtt ( 0 ),
-  curr_window_size ( 10 ),
-  caused_md ( 0 ),
-  reengage_aimd ( 0 )
+  curr_window_size ( 60 ),
+  rtt_diff ( 0 ),
+  min_rtt ( 5000 ),
+  prev_rtt ( 100 ),
+  consecutive_decreases ( 0 )
 {
 }
 
@@ -57,21 +60,43 @@ void Controller::ack_received( const uint64_t sequence_number_acked,
 			       const uint64_t timestamp_ack_received )
                                /* when the ack was received (by sender) */
 {
-  uint64_t rtt = timestamp_ack_received -
+  int64_t rtt = timestamp_ack_received -
       datagram_send_times[sequence_number_acked % MAX_WINDOW_SIZE];
-  /*
 
-  uint64_t old_rtt = running_rtt;
-  running_rtt = BETA * rtt + (1 - BETA) * running_rtt;
-  */
+  int64_t new_rtt_diff = rtt - prev_rtt;
+  prev_rtt = rtt;
+  rtt_diff = (1 - ALPHA) * rtt_diff + ALPHA * new_rtt_diff;
 
-  if (rtt > 120 && sequence_number_acked >= reengage_aimd) {
-    caused_md = sequence_number_acked;
-    // let all outstanding packets clear
-    reengage_aimd = caused_md + (uint64_t) curr_window_size;
-    curr_window_size /= 2;
+  if (rtt <= min_rtt) {
+    min_rtt = rtt;
+  }
+
+  // Get some data first
+  if (sequence_number_acked < 20) return;
+
+  double normalized_gradient = rtt_diff / min_rtt;
+  if (normalized_gradient < 0) {
+    consecutive_decreases += 1;
   } else {
-    curr_window_size += 1 / curr_window_size;
+    consecutive_decreases = 0;
+  }
+
+  if (rtt < T_LOW) {
+    cerr << "rtt < T_LOW" << endl;
+    curr_window_size += DELTA / curr_window_size;
+  } else if (rtt > T_HIGH) {
+    cerr << "rtt > T_HIGH" << endl;
+    curr_window_size = curr_window_size * (1 - BETA * (1 - T_HIGH / rtt));
+  } else if (normalized_gradient <= -0.001) {
+    cerr << "normalized_gradient <= 0" << endl;
+    curr_window_size += DELTA * 1 / curr_window_size;
+  } else {
+    cerr << "normalized_gradient > 0" << endl;
+    curr_window_size = curr_window_size * (1 - BETA * normalized_gradient);
+  }
+
+  if (curr_window_size < 1) {
+    curr_window_size = 1;
   }
 
   if ( debug_ ) {
@@ -80,6 +105,8 @@ void Controller::ack_received( const uint64_t sequence_number_acked,
 	 << " (send @ time " << send_timestamp_acked
 	 << ", received @ time " << recv_timestamp_acked << " by receiver's clock"
          << ", rtt = " << rtt << "ms)"
+         << ", rtt_diff = " << rtt_diff
+         << ", normalized_gradient = " << normalized_gradient
 	 << endl;
   }
 }
