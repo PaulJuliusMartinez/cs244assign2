@@ -3,6 +3,10 @@
 
 #include <cstdint>
 
+#define MAX_WINDOW_SIZE 256
+#define BETA 0.05
+#define RTT_CONGESTION_DETECTION 1.25
+
 /* Congestion controller interface */
 
 class Controller
@@ -11,6 +15,11 @@ private:
   bool debug_; /* Enables debugging output */
 
   /* Add member variables here */
+  uint64_t datagram_send_times[MAX_WINDOW_SIZE]; /* Keep track of packet departure times */
+  double running_rtt;
+  float curr_window_size;
+  uint64_t caused_md;
+  uint64_t reengage_aimd;
 
 public:
   /* Public interface for the congestion controller */
